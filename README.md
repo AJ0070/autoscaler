@@ -74,6 +74,31 @@ Useful optional settings:
 - `WOODPECKER_DIGITALOCEAN_NAT_GATEWAY` (name or ID of an existing [VPC NAT gateway](https://docs.digitalocean.com/products/vpc-nat-gateway/); the agents are placed in the VPC it serves as default gateway so they can reach the server and pull images)
 - `WOODPECKER_DIGITALOCEAN_PUBLIC_IPV6_ENABLE` (default: `true`, requires public IPv4)
 
+## Azure
+
+Set `WOODPECKER_PROVIDER=azure` and configure at least:
+
+- `WOODPECKER_AZURE_SUBSCRIPTION_ID`
+- `WOODPECKER_AZURE_RESOURCE_GROUP` (an existing resource group)
+- `WOODPECKER_AZURE_LOCATION` (e.g. `westeurope`)
+- `WOODPECKER_AZURE_SUBNET_ID` (resource ID of an existing subnet)
+
+Azure support is currently experimental: it has not been tested by the project maintainers, as none of them have real provider access.
+
+Authentication uses a service principal. Either pass it via `WOODPECKER_AZURE_TENANT_ID`, `WOODPECKER_AZURE_CLIENT_ID` and `WOODPECKER_AZURE_CLIENT_SECRET` (or `_FILE`), or rely on the default Azure credential chain (managed identity, `az login`, or the `AZURE_*` environment variables).
+
+The autoscaler creates a public IP (optional), a network interface in the configured subnet and a VM per agent, all tagged with the autoscaler pool so only agents from the configured pool are listed or terminated.
+
+Useful optional settings:
+
+- `WOODPECKER_AZURE_VM_SIZE` (default: `Standard_B1s`)
+- `WOODPECKER_AZURE_IMAGE` (default: `Canonical:ubuntu-24_04-lts:server:latest`, as `publisher:offer:sku:version`)
+- `WOODPECKER_AZURE_OS_DISK_TYPE` (default: `Standard_LRS`)
+- `WOODPECKER_AZURE_ADMIN_USERNAME` (default: `woodpecker`)
+- `WOODPECKER_AZURE_SSH_PUBLIC_KEY` (or `_FILE`; if unset an ephemeral key is generated and its private key discarded)
+- `WOODPECKER_AZURE_ASSIGN_PUBLIC_IP` (default: `true`)
+- `WOODPECKER_AZURE_TAGS`
+
 ## OpenStack
 
 Set `WOODPECKER_PROVIDER=openstack`. The prefix for all the following environment variables is `WOODPECKER_OPENSTACK_`.
@@ -105,7 +130,7 @@ The billing model is selected automatically by the provider, so no extra configu
   - [x] Hetzner Cloud
   - [x] Amazon AWS
   - [ ] Google Cloud
-  - [ ] Azure
+  - [x] Azure **[experimental]** (untested by the maintainers against real provider access, see [above](#azure))
   - [x] Digital Ocean **[experimental]** (untested by the maintainers against real provider access, see [above](#digitalocean))
   - [x] Linode
   - [x] OpenStack **[experimental]**

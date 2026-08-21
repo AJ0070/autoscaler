@@ -16,6 +16,7 @@ import (
 	"go.woodpecker-ci.org/autoscaler/engine"
 	"go.woodpecker-ci.org/autoscaler/engine/types"
 	"go.woodpecker-ci.org/autoscaler/providers/aws"
+	"go.woodpecker-ci.org/autoscaler/providers/azure"
 	"go.woodpecker-ci.org/autoscaler/providers/digitalocean"
 	"go.woodpecker-ci.org/autoscaler/providers/equinixmetal"
 	"go.woodpecker-ci.org/autoscaler/providers/hetznercloud"
@@ -31,6 +32,8 @@ func setupProvider(ctx context.Context, cmd *cli.Command, config *config.Config)
 	switch cmd.String("provider") {
 	case "aws":
 		return aws.New(ctx, cmd, config)
+	case "azure":
+		return azure.New(ctx, cmd, config)
 	case "digitalocean":
 		return digitalocean.New(ctx, cmd, config)
 	case "hetznercloud":
@@ -177,6 +180,7 @@ func main() {
 	app.Flags = append(app.Flags, scaleway.ProviderFlags...)
 	app.Flags = append(app.Flags, linode.ProviderFlags...)
 	app.Flags = append(app.Flags, aws.ProviderFlags...)
+	app.Flags = append(app.Flags, azure.ProviderFlags...)
 	app.Flags = append(app.Flags, digitalocean.ProviderFlags...)
 	app.Flags = append(app.Flags, vultr.ProviderFlags...)
 	app.Flags = append(app.Flags, openstack.ProviderFlags...)
