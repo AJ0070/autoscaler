@@ -30,15 +30,23 @@ type fakeAzureClient struct {
 	createdPIP *armnetwork.PublicIPAddress
 	deleted    []string
 
-	failCreateVM error
+	failCreateVM  error
+	failCreateNIC error
+	failCreatePIP error
 }
 
 func (f *fakeAzureClient) CreatePublicIP(_ context.Context, name string, pip armnetwork.PublicIPAddress) (string, error) {
+	if f.failCreatePIP != nil {
+		return "", f.failCreatePIP
+	}
 	f.createdPIP = &pip
 	return "/subscriptions/s/pip/" + name, nil
 }
 
 func (f *fakeAzureClient) CreateNIC(_ context.Context, name string, nic armnetwork.Interface) (string, error) {
+	if f.failCreateNIC != nil {
+		return "", f.failCreateNIC
+	}
 	f.createdNIC = &nic
 	return "/subscriptions/s/nic/" + name, nil
 }
@@ -219,6 +227,10 @@ func TestDeployAgentCreatesResources(t *testing.T) {
 	assert.Equal(t, "/subscriptions/s/nic/pool-1-agent-1-nic", *vm.Properties.NetworkProfile.NetworkInterfaces[0].ID)
 	assert.Equal(t, armcompute.DeleteOptionsDelete, *vm.Properties.NetworkProfile.NetworkInterfaces[0].Properties.DeleteOption)
 	assert.True(t, *vm.Properties.OSProfile.LinuxConfiguration.DisablePasswordAuthentication)
+	assert.Equal(t, "pool-1-agent-1", *vm.Properties.OSProfile.ComputerName)
+	assert.Equal(t, defaultAdminUser, *vm.Properties.OSProfile.AdminUsername)
+	assert.Equal(t, "ssh-ed25519 AAAA test", *vm.Properties.OSProfile.LinuxConfiguration.SSH.PublicKeys[0].KeyData)
+	assert.Equal(t, armcompute.StorageAccountTypes(defaultOSDiskType), *vm.Properties.StorageProfile.OSDisk.ManagedDisk.StorageAccountType)
 	assert.Equal(t, "pool-1", *vm.Tags[tagPool])
 
 	userData, err := base64.StdEncoding.DecodeString(*vm.Properties.OSProfile.CustomData)
@@ -246,6 +258,28 @@ func TestDeployAgentCreateVMError(t *testing.T) {
 
 	err := p.DeployAgent(t.Context(), &woodpecker.Agent{Name: "pool-1-agent-1"})
 	require.ErrorContains(t, err, "CreateVM: boom")
+	// the NIC and public IP created before the VM must be rolled back
+	assert.Equal(t, []string{"nic:pool-1-agent-1-nic", "pip:pool-1-agent-1-pip"}, client.deleted)
+}
+
+func TestDeployAgentRollsBackPublicIPOnNICError(t *testing.T) {
+	client := &fakeAzureClient{failCreateNIC: errors.New("boom")}
+	p := newTestProvider(client)
+
+	err := p.DeployAgent(t.Context(), &woodpecker.Agent{Name: "pool-1-agent-1"})
+	require.ErrorContains(t, err, "CreateNIC: boom")
+	// the missing NIC delete is a no-op; the public IP must still be dropped
+	assert.Equal(t, []string{"nic:pool-1-agent-1-nic", "pip:pool-1-agent-1-pip"}, client.deleted)
+}
+
+func TestDeployAgentNoRollbackOfPublicIPWhenDisabled(t *testing.T) {
+	client := &fakeAzureClient{failCreateVM: errors.New("boom")}
+	p := newTestProvider(client)
+	p.assignPublicIP = false
+
+	err := p.DeployAgent(t.Context(), &woodpecker.Agent{Name: "pool-1-agent-1"})
+	require.ErrorContains(t, err, "CreateVM: boom")
+	assert.Equal(t, []string{"nic:pool-1-agent-1-nic"}, client.deleted)
 }
 
 func TestListDeployedAgentNamesFiltersPoolAndState(t *testing.T) {
@@ -255,6 +289,7 @@ func TestListDeployedAgentNamesFiltersPoolAndState(t *testing.T) {
 		poolVM("pool-1-agent-2", "pool-1", "Deleting"),
 		poolVM("pool-1-agent-3", "pool-1", "Creating"),
 		{Name: to.Ptr("untagged")},
+		{Name: to.Ptr("nil-tag-value"), Tags: map[string]*string{tagPool: nil}},
 	}}
 	p := newTestProvider(client)
 
@@ -271,6 +306,17 @@ func TestRemoveAgentDeletesResourcesInOrder(t *testing.T) {
 
 	require.NoError(t, p.RemoveAgent(t.Context(), &woodpecker.Agent{Name: "pool-1-agent-1"}))
 	assert.Equal(t, []string{"vm:pool-1-agent-1", "nic:pool-1-agent-1-nic", "pip:pool-1-agent-1-pip"}, client.deleted)
+}
+
+func TestRemoveAgentWithoutPublicIP(t *testing.T) {
+	client := &fakeAzureClient{vms: []*armcompute.VirtualMachine{
+		poolVM("pool-1-agent-1", "pool-1", "Succeeded"),
+	}}
+	p := newTestProvider(client)
+	p.assignPublicIP = false
+
+	require.NoError(t, p.RemoveAgent(t.Context(), &woodpecker.Agent{Name: "pool-1-agent-1"}))
+	assert.Equal(t, []string{"vm:pool-1-agent-1", "nic:pool-1-agent-1-nic"}, client.deleted)
 }
 
 func TestRemoveAgentIgnoresUnknownAndOtherPools(t *testing.T) {

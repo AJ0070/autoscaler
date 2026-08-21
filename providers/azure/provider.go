@@ -122,15 +122,36 @@ func (p *provider) DeployAgent(ctx context.Context, agent *woodpecker.Agent) err
 
 	nicID, err := p.client.CreateNIC(ctx, agent.Name+nicSuffix, p.networkInterface(publicIPID))
 	if err != nil {
+		// the public IP is already created; drop it so it does not leak
+		p.rollback(ctx, agent.Name)
 		return fmt.Errorf("%s: CreateNIC: %w", p.name, err)
 	}
 
 	vm := p.virtualMachine(agent.Name, nicID, base64.StdEncoding.EncodeToString([]byte(userData)))
 	if err := p.client.CreateVM(ctx, agent.Name, vm); err != nil {
+		// the NIC and public IP are already created; drop them so they do not leak
+		p.rollback(ctx, agent.Name)
 		return fmt.Errorf("%s: CreateVM: %w", p.name, err)
 	}
 
 	return nil
+}
+
+// rollback best-effort deletes the network resources created for an agent whose
+// VM creation did not complete. Azure needs three sequential creations per
+// agent, so without this a failed deploy would strand a NIC and a billed public
+// IP that no later reconcile can reclaim (they are only reachable through their
+// VM, which never came up). Deletes are idempotent, so a missing resource is
+// fine; failures are logged, not returned, so the original error surfaces.
+func (p *provider) rollback(ctx context.Context, name string) {
+	if err := p.client.DeleteNIC(ctx, name+nicSuffix); err != nil {
+		log.Warn().Err(err).Msgf("%s: rollback DeleteNIC for %s", p.name, name)
+	}
+	if p.assignPublicIP {
+		if err := p.client.DeletePublicIP(ctx, name+pipSuffix); err != nil {
+			log.Warn().Err(err).Msgf("%s: rollback DeletePublicIP for %s", p.name, name)
+		}
+	}
 }
 
 func (p *provider) RemoveAgent(ctx context.Context, agent *woodpecker.Agent) error {
